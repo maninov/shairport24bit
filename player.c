@@ -193,8 +193,6 @@ seq_order(seq_t a, seq_t b)
 static inline seq_t
 seq_sum(seq_t a, seq_t b)
 {
-  uint32_t p = a & 0xffff;
-  uint32_t q = b & 0x0ffff;
   uint32_t r = (a + b) & 0xffff;
   return r;
 }
@@ -218,7 +216,6 @@ alac_decode(short *dest, int *destlen, uint8_t * buf, int len)
     return -1;
   }
   unsigned char packet[MAX_PACKET];
-  unsigned char packetp[MAX_PACKET];
   int reply = 0;
   int outsize = b16_byte_ch * (*destlen);
   int toutsize = outsize;
@@ -310,7 +307,7 @@ player_put_packet(seq_t seqno, uint32_t timestamp, uint8_t * data, int len)
   pthread_mutex_lock(&ab_mutex);
   packet_count++;
   time_of_last_audio_packet = get_absolute_time_in_fp();
-  if (connection_state_to_output) {	// if we are supposed to be
+  if (connection_state_to_output) {
     if ((flush_rtp_timestamp != 0) && ((timestamp == flush_rtp_timestamp) || seq32_order(timestamp, flush_rtp_timestamp))) {
       debug(3, "Dropping flushed packet in player_put_packet, seqno %u, timestamp %u, flushing to " "timestamp: %u.", seqno, timestamp, flush_rtp_timestamp);
     } else {
@@ -355,7 +352,6 @@ player_put_packet(seq_t seqno, uint32_t timestamp, uint8_t * data, int len)
 	  if (config.playback_mode == ST_mono) {
 	    signed short *v = abuf->data;
 	    int i;
-	    int both;
 	    for (i = frame_size; i; i--) {
 	      int both = *v + *(v + 1);
 	      if (both > INT16_MAX) {
@@ -413,14 +409,13 @@ dithered_vol(short sample)
   return out >> 8;
   // return out // 32bit
   // return out >> 8 // 24bit
-  // return out >> 16 // 16bit
+  // return (short)(out >> 16) // 16bit
 }
 
 // get the next frame, when available. return 0 if underrun/stream reset.
 static abuf_t *
 buffer_get_frame(void)
 {
-  int16_t buf_fill;
   uint64_t local_time_now;
   abuf_t *abuf = 0;
   int i;
@@ -442,7 +437,7 @@ buffer_get_frame(void)
     int rco = get_requested_connection_state_to_output();
     if (connection_state_to_output != rco) {
       connection_state_to_output = rco;
-      if (connection_state_to_output == 0) {	// going off
+      if (connection_state_to_output == 0) {
 	pthread_mutex_lock(&flush_mutex);
 	flush_requested = 1;
 	pthread_mutex_unlock(&flush_mutex);
@@ -490,7 +485,7 @@ buffer_get_frame(void)
       }
       curframe = audio_buffer + BUFIDX(ab_read);
       if (curframe->ready) {
-	notified_buffer_empty = 0;	// at least one buffer now 
+	notified_buffer_empty = 0;
 	if (ab_buffering) {
 	  int have_sent_prefiller_silence;
 	  uint32_t reference_timestamp;
@@ -559,8 +554,7 @@ buffer_get_frame(void)
 		  debug(2, "frame size (fs) < 0 with max_dac_delay of %lld and dac_delay of %ld", max_dac_delay, dac_delay);
 		  fs = 0;
 		}
-		if ((exact_frame_gap <= fs)
-		    || (exact_frame_gap <= frame_size * 2)) {
+		if ((exact_frame_gap <= fs) || (exact_frame_gap <= frame_size * 2)) {
 		  fs = exact_frame_gap;
 		  ab_buffering = 0;
 		}
@@ -650,7 +644,6 @@ buffer_get_frame(void)
     pthread_mutex_unlock(&ab_mutex);
     return 0;
   }
-  seq_t read = ab_read;
   if (!ab_buffering) {
     for (i = 8; i < (seq_diff(ab_read, ab_write) / 2); i = (i * 2)) {
       seq_t next = seq_sum(ab_read, i);
@@ -662,7 +655,6 @@ buffer_get_frame(void)
     }
   }
   if (!curframe->ready) {
-    // debug(1, "Supplying a silent frame for frame %u", read);
     missing_packets++;
     memset(curframe->data, 0, b16_byte_ch * frame_size);
     curframe->timestamp = 0;
@@ -678,7 +670,7 @@ shortmean(short a, short b)
 {
   long al = (long) a;
   long bl = (long) b;
-  long longmean = (al + bl) / 2;
+  long longmean = (al + bl) >> 1;
   short r = (short) longmean;
   if (r != longmean)
     debug(1, "Error calculating average of two shorts");
@@ -691,9 +683,9 @@ stuff_buffer_normal(short *inptr, int length, int *outptr)
   int i;
   for (i = 0; i < length << 1; i++)
     *outptr++ = ((long) *inptr++) << 8;
+  // *outptr++ =((long) *inptr++) <<16;//32bit
+  // *outptr++ =((long) *inptr++) <<8; //24bit
   // *outptr++ =*inptr++; //16bit
-  // *outptr++ =((long)*inptr++)<<8; //24bit
-  // *outptr++ =((long)*inptr++)<<16;//32bit
 }
 
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
@@ -725,6 +717,7 @@ stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff)
 }
 
 #ifdef HAVE_LIBSOXR
+const soxr_io_spec_t io_spec = {SOXR_INT16_I,SOXR_INT16_I,1.0,NULL,0};
 static short *otptr = NULL;
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
 static int
@@ -736,20 +729,9 @@ stuff_buffer_soxr(short *inptr, int length, int *outptr, int stuff)
   int i;
   short *ip = inptr;
   if (stuff) {
-    otptr = realloc(otptr, b16_byte_ch * (length + max_frame_size_change));
     short *op = otptr;
-    soxr_io_spec_t io_spec;
-    io_spec.itype = SOXR_INT16_I;
-    io_spec.otype = SOXR_INT16_I;
-    io_spec.scale = 1.0;
-    io_spec.e = NULL;
-    io_spec.flags = 0;
     size_t odone;
-    soxr_error_t error = soxr_oneshot(length, length + stuff, 2,
-				      inptr, length, NULL,
-				      otptr, length + stuff, &odone,
-				      &io_spec,
-				      NULL, NULL);
+    soxr_error_t error = soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
     if (error)
       die("soxr error: %s\n", "error: %s\n", soxr_strerror(error));
     if (odone > length + 1)
@@ -771,7 +753,7 @@ stuff_buffer_soxr(short *inptr, int length, int *outptr, int stuff)
 }
 #endif
 
-typedef struct stats {		// statistics for running averages
+typedef struct stats {
   int64_t sync_error, correction, drift;
 } stats_t;
 
@@ -811,11 +793,15 @@ player_thread_func(void *arg)
   const int print_interval = trend_interval;
   char rnstate[256];
   initstate(time(NULL), rnstate, 256);
-  signed short *inbuf;
   signed int *outbuf;
   outbuf = malloc(b32_byte_ch * (frame_size + max_frame_size_change));
   if (outbuf == NULL)
     debug(1, "Failed to allocate memory for an output buffer.");
+#ifdef HAVE_LIBSOXR
+  otptr = malloc(b16_byte_ch * (frame_size + max_frame_size_change));
+  if (otptr == NULL)
+    debug(1, "Failed to allocate memory for an output buffer(soxr).");
+#endif
   late_packet_message_sent = 0;
   first_packet_timestamp = 0;
   missing_packets = late_packets = too_late_packets = resend_requests = 0;
@@ -836,7 +822,6 @@ player_thread_func(void *arg)
       inform("total packets, " "missing packets, " "late packets, " "too late packets, " "resend requests, " "min buffer occupancy, " "max buffer occupancy");
     }
   }
-  uint64_t tens_of_seconds = 0;
   while (!please_stop) {
     abuf_t *inframe = buffer_get_frame();
     if (inframe) {
@@ -921,9 +906,7 @@ player_thread_func(void *arg)
 	      amount_to_stuff = 0;
 	    }
 	    if (amount_to_stuff) {
-	      if ((local_time_now)
-		  && (first_packet_time_to_play)
-		  && (local_time_now >= first_packet_time_to_play)) {
+	      if ((local_time_now) && (first_packet_time_to_play) && (local_time_now >= first_packet_time_to_play)) {
 		int64_t tp = (local_time_now - first_packet_time_to_play) >> 32;
 		if (tp < 5)
 		  amount_to_stuff = 0;
@@ -971,10 +954,7 @@ player_thread_func(void *arg)
 	    int64_t abs_sync_error = sync_error;
 	    if (abs_sync_error < 0)
 	      abs_sync_error = -abs_sync_error;
-	    if ((config.no_sync == 0)
-		&& (inframe->timestamp != 0) && (!please_stop)
-		&& (config.resyncthreshold != 0)
-		&& (abs_sync_error > config.resyncthreshold)) {
+	    if ((config.no_sync == 0) && (inframe->timestamp != 0) && (!please_stop) && (config.resyncthreshold != 0) && (abs_sync_error > config.resyncthreshold)) {
 	      sync_error_out_of_bounds++;
 	      if (sync_error_out_of_bounds > 3) {
 		debug(1, "Lost sync with source for %d consecutive packets -- flushing and " "resyncing. Error: %lld.", sync_error_out_of_bounds, sync_error);
@@ -1046,7 +1026,6 @@ player_thread_func(void *arg)
 	  double moving_average_sync_error = (1.0 * tsum_of_sync_errors) / number_of_statistics;
 	  double moving_average_correction = (1.0 * tsum_of_corrections) / number_of_statistics;
 	  double moving_average_insertions_plus_deletions = (1.0 * tsum_of_insertions_and_deletions) / number_of_statistics;
-	  double moving_average_drift = (1.0 * tsum_of_drifts) / number_of_statistics;
 	  if (config.statistics_requested) {
 	    if (at_least_one_frame_seen) {
 	      if ((config.output->delay)) {
@@ -1054,32 +1033,32 @@ player_thread_func(void *arg)
 		  inform("%*.1f,"	/* Sync error inf frames */
 			 "%*.1f,"	/* net correction in ppm */
 			 "%*.1f,"	/* corrections in ppm */
-			 "%*d,"	/* total packets */
+			 "%*d,"	        /* total packets */
 			 "%*llu,"	/* missing packets */
 			 "%*llu,"	/* late packets */
 			 "%*llu,"	/* too late packets */
 			 "%*llu,"	/* resend requests */
 			 "%*lli,"	/* min DAC queue size */
-			 "%*d,"	/* min buffer occupancy */
-			 "%*d",	/* max buffer occupancy */
+			 "%*d,"         /* min buffer occupancy */
+			 "%*d",	        /* max buffer occupancy */
 			 10, moving_average_sync_error,
 			 10,
-			 moving_average_correction *
-			 1000000 / 352, 10,
-			 moving_average_insertions_plus_deletions
-			 * 1000000 / 352, 12,
+			 moving_average_correction * 1000000 / 352,
+			 10,
+			 moving_average_insertions_plus_deletions * 1000000 / 352,
+			 12,
 			 play_number, 7, missing_packets,
 			 7, late_packets, 7, too_late_packets, 7, resend_requests, 7, minimum_dac_queue_size, 5, minimum_buffer_occupancy, 5, maximum_buffer_occupancy);
 		} else {
 		  inform("%*.1f,"	/* Sync error inf frames */
-			 "%*d,"	/* total packets */
+			 "%*d," 	/* total packets */
 			 "%*llu,"	/* missing packets */
 			 "%*llu,"	/* late packets */
 			 "%*llu,"	/* too late packets */
 			 "%*llu,"	/* resend requests */
 			 "%*lli,"	/* min DAC queue size */
-			 "%*d,"	/* min buffer occupancy */
-			 "%*d",	/* max buffer occupancy */
+			 "%*d," 	/* min buffer occupancy */
+			 "%*d", 	/* max buffer occupancy */
 			 10, moving_average_sync_error,
 			 12, play_number,
 			 7, missing_packets, 7, late_packets, 7, too_late_packets, 7, resend_requests, 7, minimum_dac_queue_size, 5, minimum_buffer_occupancy, 5, maximum_buffer_occupancy);
@@ -1119,6 +1098,9 @@ player_thread_func(void *arg)
     config.output->stop();
   usleep(100000);
   free(outbuf);
+#ifdef HAVE_LIBSOXR
+  free(otptr);
+#endif
   debug(1, "Shut down audio, control and timing threads");
   itr.please_stop = 1;
   pthread_kill(rtp_audio_thread, SIGUSR1);
@@ -1138,7 +1120,7 @@ player_thread_func(void *arg)
 void
 player_volume(double airplay_volume)
 {
-  int32_t hw_min_db, hw_max_db, hw_range_db, range_to_use, min_db, max_db;
+  int32_t hw_min_db, hw_max_db, hw_range_db, min_db, max_db;
   int32_t sw_min_db = -9630;
   int32_t sw_max_db = 0;
   int32_t sw_range_db = sw_max_db - sw_min_db;
@@ -1208,7 +1190,6 @@ player_volume(double airplay_volume)
       software_attenuation = scaled_attenuation;
     }
   }
-
   if ((config.output->volume) && (hw_range_db)) {
     config.output->volume(hardware_attenuation);
   }
