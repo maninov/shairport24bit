@@ -554,7 +554,7 @@ buffer_get_frame(void)
 		  debug(2, "frame size (fs) < 0 with max_dac_delay of %lld and dac_delay of %ld", max_dac_delay, dac_delay);
 		  fs = 0;
 		}
-		if ((exact_frame_gap <= fs) || (exact_frame_gap <= frame_size * 2)) {
+		if ((exact_frame_gap <= fs) || (exact_frame_gap <= frame_size << 1)) {
 		  fs = exact_frame_gap;
 		  ab_buffering = 0;
 		}
@@ -645,7 +645,7 @@ buffer_get_frame(void)
     return 0;
   }
   if (!ab_buffering) {
-    for (i = 8; i < (seq_diff(ab_read, ab_write) / 2); i = (i * 2)) {
+    for (i = 8; i < seq_diff(ab_read, ab_write) >> 1; i <<= 1) {
       seq_t next = seq_sum(ab_read, i);
       abuf = audio_buffer + BUFIDX(next);
       if (!abuf->ready) {
@@ -698,7 +698,7 @@ stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff)
   if (stuff)
     stuffsamp = (rand() % (length - 2)) + 1;
   pthread_mutex_lock(&vol_mutex);
-  for (i = 0; i < stuffsamp * 2; i++)
+  for (i = 0; i < stuffsamp << 1; i++)
     *outptr++ = dithered_vol(*inptr++);
   if (stuff) {
     if (stuff == 1) {
@@ -731,11 +731,12 @@ stuff_buffer_soxr(short *inptr, int length, int *outptr, int stuff)
   if (stuff) {
     short *op = otptr;
     size_t odone;
-    soxr_error_t error = soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
-    if (error)
-      die("soxr error: %s\n", "error: %s\n", soxr_strerror(error));
-    if (odone > length + 1)
-      die("odone = %d!\n", odone);
+    soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
+    //soxr_error_t error = soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
+    //if (error)
+    //  die("soxr error: %s\n", "error: %s\n", soxr_strerror(error));
+    //if (odone > length + 1)
+    //  die("odone = %d!\n", odone);
     const int gpm = 5;
     short *ip2 = &inptr[(length - gpm) << 1];
     short *op2 = &otptr[(length + stuff - gpm) << 1];
@@ -743,12 +744,10 @@ stuff_buffer_soxr(short *inptr, int length, int *outptr, int stuff)
       *op++ = *ip++;
       *op2++ = *ip2++;
     }
-    op = otptr;
-    for (i = 0; i < (length + stuff) << 1; i++)
-      *outptr++ = dithered_vol(*op++);
-  } else
-    for (i = 0; i < (length + stuff) << 1; i++)
-      *outptr++ = dithered_vol(*ip++);
+    ip = otptr;
+  }
+  for (i = 0; i < (length + stuff) << 1; i++)
+    *outptr++ = dithered_vol(*ip++);
   return length + stuff;
 }
 #endif
