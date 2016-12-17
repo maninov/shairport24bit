@@ -429,7 +429,8 @@ int open_alsa_device(void) {
   }
 
   ret = snd_pcm_hw_params_set_format(alsa_handle, alsa_params,
-                                     SND_PCM_FORMAT_S24);
+				     config.format);
+                                     //SND_PCM_FORMAT_S24);
   if (ret < 0) {
     die("audio_alsa: Sample format not available for device \"%s\": %s",
         alsa_out_dev, snd_strerror(ret));

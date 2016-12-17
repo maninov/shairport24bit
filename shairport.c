@@ -222,6 +222,9 @@ void usage(char *progname) {
          "if running as a daemon.\n");
   printf("    --tolerance=TOLERANCE   allow a synchronization error of TOLERANCE frames (default "
          "88) before trying to correct it.\n");
+
+  printf("    -f, --format=NUMBER     number of pcm format 6(S24LE), 2(S16LE) (default 6).\n");
+
   printf("    --password=PASSWORD     require PASSWORD to connect. Default is not to require a "
          "password.\n");
 #ifdef CONFIG_METADATA
@@ -268,6 +271,7 @@ int parse_options(int argc, char **argv) {
       {"timeout", 't', POPT_ARG_INT, &config.timeout, 't', NULL},
       {"password", 0, POPT_ARG_STRING, &config.password, 0, NULL},
       {"tolerance", 0, POPT_ARG_INT, &config.tolerance, 0, NULL},
+      {"format", 'f', POPT_ARG_INT, &config.format, 0, NULL},
 #ifdef CONFIG_METADATA
       {"metadata-pipename", 'M', POPT_ARG_STRING, &config.metadata_pipename, 'M', NULL},
       {"get-coverart", 'g', POPT_ARG_NONE, &config.get_coverart, 'g', NULL},
@@ -392,6 +396,10 @@ int parse_options(int argc, char **argv) {
       /* Get the drift tolerance setting. */
       if (config_lookup_int(config.cfg, "general.drift", &value))
         config.tolerance = value;
+
+      /* Get the pcm format setting. */
+      if (config_lookup_int(config.cfg, "general.format", &value))
+        config.format = value;
 
       /* Get the resync setting. */
       if (config_lookup_int(config.cfg, "general.resync_threshold", &value))
@@ -749,6 +757,7 @@ int main(int argc, char **argv) {
   config.resyncthreshold = 441 * 5;  // this number of frames is 50 ms
   config.timeout = 120; // this number of seconds to wait for [more] audio before switching to idle.
   config.tolerance = 88; // this number of frames of error before attempting to correct it.
+  config.format = 6; // SND_PCM_FORMAT_S24 (/usr/include/alsa/pcm.h)
   config.buffer_start_fill = 220;
   config.port = 5000;
   config.packet_stuffing = ST_basic; // simple interpolation or deletion
@@ -1011,6 +1020,7 @@ int main(int argc, char **argv) {
   debug(1, "allow a session to be interrupted: %d.", config.allow_session_interruption);
   debug(1, "busy timeout time is %d.", config.timeout);
   debug(1, "drift tolerance is %d frames.", config.tolerance);
+  debug(1, "pcm format is %d.", config.format);
   debug(1, "password is \"%s\".", config.password);
   debug(1, "ignore_volume_control is %d.", config.ignore_volume_control);
   debug(1, "playback_mode is %d (0-stereo, 1-mono).", config.playback_mode);

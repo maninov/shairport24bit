@@ -90,6 +90,7 @@ typedef struct {
   char *cmd_start, *cmd_stop;
   int cmd_blocking;
   int tolerance; // allow this much drift before attempting to correct it
+  int format;
   enum stuffing_type packet_stuffing;
   char *pidfile;
   // char *logfile;
