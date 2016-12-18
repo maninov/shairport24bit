@@ -682,7 +682,7 @@ stuff_buffer_normal(short *inptr, int length, int *outptr, int shift) //shift 24
 
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
 static int
-stuff_buffer_basic_int(short *inptr, int length, int *outptr, int stuff, int shift) //shift 24:8,32:0
+stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff, int shift) //shift 16:16, 24:8, 32:0
 {
   if ((stuff > 1) || (stuff < -1) || (length < 100))
     return length;
@@ -690,46 +690,39 @@ stuff_buffer_basic_int(short *inptr, int length, int *outptr, int stuff, int shi
   if (stuff)
     stuffsamp = (rand() % (length - 2)) + 1;
   pthread_mutex_lock(&vol_mutex);
-  for (i = 0; i < stuffsamp << 1; i++)
-    *outptr++ = dithered_vol(*inptr++, shift);
-  if (stuff) {
-    if (stuff == 1) {
-      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), shift);
-      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), shift);
-    } else if (stuff == -1)
-      inptr += 2;
-    int remainder = length;
-    if (stuff < 0)
-      remainder += stuff;
-    for (; i < remainder << 1; i++)
+  if (shift == 16)
+    for (i = 0; i < stuffsamp; i++) {
+      *(short*)outptr = dithered_vol(*inptr++, shift);
+      *((short*)outptr + 1) = dithered_vol(*inptr++, shift);
+      outptr++;
+    }
+  else
+    for (i = 0; i < stuffsamp << 1; i++)
       *outptr++ = dithered_vol(*inptr++, shift);
-  }
-  pthread_mutex_unlock(&vol_mutex);
-  return length + stuff;
-}
-
-static int
-stuff_buffer_basic(short *inptr, int length, short *outptr, int stuff)
-{
-  if ((stuff > 1) || (stuff < -1) || (length < 100))
-    return length;
-  int i, stuffsamp = length;
-  if (stuff)
-    stuffsamp = (rand() % (length - 2)) + 1;
-  pthread_mutex_lock(&vol_mutex);
-  for (i = 0; i < stuffsamp << 1; i++)
-    *outptr++ = dithered_vol(*inptr++, 16);
   if (stuff) {
-    if (stuff == 1) {
-      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), 16);
-      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), 16);
-    } else if (stuff == -1)
+    if (stuff == 1)
+      if (shift == 16) {
+	*(short*)outptr = dithered_vol(shortmean(inptr[-2], inptr[0]), shift);
+	*((short*)outptr + 1) = dithered_vol(shortmean(inptr[-1], inptr[1]), shift);
+	outptr++;
+      } else {
+	*outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), shift);
+	*outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), shift);
+      }
+    else if (stuff == -1)
       inptr += 2;
     int remainder = length;
     if (stuff < 0)
       remainder += stuff;
-    for (; i < remainder << 1; i++)
-      *outptr++ = dithered_vol(*inptr++, 16);
+    if (shift == 16)
+      for (; i < remainder; i++) {
+        *((short*)outptr) = dithered_vol(*inptr++, shift);
+        *((short*)outptr+1) = dithered_vol(*inptr++, shift);
+	outptr++;
+      }
+    else
+      for (; i < remainder << 1; i++)
+        *outptr++ = dithered_vol(*inptr++, shift);
   }
   pthread_mutex_unlock(&vol_mutex);
   return length + stuff;
@@ -738,32 +731,15 @@ stuff_buffer_basic(short *inptr, int length, short *outptr, int stuff)
 #ifdef HAVE_LIBSOXR
 const soxr_io_spec_t io_spec = {SOXR_INT16_I,SOXR_INT16_I,1.0,NULL,0};
 static short *otptr = NULL;
-
-static void
-out(short *inptr, short *outptr, int len, int shift)
-{
-  int i;
-  for (i = 0; i < len; i++)
-    *outptr++ = dithered_vol(*inptr++, shift);
-}
-
-static void
-out_int(short *inptr, int *outptr, int len, int shift)
-{
-  int i;
-  for (i = 0; i < len; i++)
-    *outptr++ = dithered_vol(*inptr++, shift);
-}
-
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
 static int
-stuff_buffer_soxr(short *inptr, int length, void *outptr, int stuff, void (*func)())
+stuff_buffer_soxr(short *inptr, int length, int *outptr, int stuff, int shift)
 {
   if ((stuff > 1) || (stuff < -1) || (length < 100))
     return length;
+  int i;
   short *ip = inptr;
   if (stuff) {
-    int i;
     short *op = otptr;
     size_t odone;
     soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
@@ -776,7 +752,15 @@ stuff_buffer_soxr(short *inptr, int length, void *outptr, int stuff, void (*func
     }
     ip = otptr;
   }
-  (*func)(ip, outptr, (length + stuff) << 1, 32 - config.format);
+  if (shift == 16)
+    for (i = 0; i < length + stuff; i++) {
+      *(short*)outptr = dithered_vol(*ip++, shift);
+      *((short*)outptr + 1) = dithered_vol(*ip++, shift);
+      outptr++;
+    }
+  else
+    for (i = 0; i < (length + stuff) << 1; i++)
+      *outptr++ = dithered_vol(*ip++, shift);
   return length + stuff;
 }
 #endif
@@ -947,22 +931,13 @@ player_thread_func(void *arg)
 #ifdef HAVE_LIBSOXR
 	      switch (config.packet_stuffing) {
 	      case ST_basic:
-		if (config.format == 16)
-		  play_samples = stuff_buffer_basic(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
-		else
-		  play_samples = stuff_buffer_basic_int(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
+		play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
 		break;
 	      case ST_soxr:
-		if (config.format == 16)
-		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out);
-		else
-		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out_int);
+		play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
 	      }
 #else
-	      if (config.format == 16)
-		play_samples = stuff_buffer_basic(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
-	      else
-		play_samples = stuff_buffer_basic_int(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
+	      play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
 #endif
 	      if (outbuf == NULL)
 		debug(1, "NULL outbuf to play -- skipping it.");
@@ -997,10 +972,7 @@ player_thread_func(void *arg)
 		  config.output->play(outbuf, inframe->length);
 		}
 	    else {
-	      if (config.format == 16)
-		play_samples = stuff_buffer_basic(inframe->data, inframe->length, (short*)outbuf, 0);
-	      else
-		play_samples = stuff_buffer_basic_int(inframe->data, inframe->length, outbuf, 0, 32 - config.format);
+	      play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, 0, 32 - config.format);
 	      if (outbuf == NULL)
 		debug(1, "NULL outbuf to play -- skipping it.");
 	      else if (inframe->length == 0)
