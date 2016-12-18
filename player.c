@@ -389,7 +389,7 @@ rand_in_range(int32_t exclusive_range_limit)
 }
 
 static inline int
-dithered_vol(short sample, int shift)//shift 0:32bit, 8:24bit, 16:16bit
+dithered_vol(short sample, int shift) //shift 0:32bit, 8:24bit, 16:16bit
 {
   long out = (long) sample * fix_volume;
   if (fix_volume < 0x10000) {
@@ -673,17 +673,16 @@ shortmean(short a, short b)
 }
 
 static void
-stuff_buffer_normal(short *inptr, int length, int *outptr)
+stuff_buffer_normal(short *inptr, int length, int *outptr, int shift) //shift 24:8,32:16
 {
   int i;
   for (i = 0; i < length << 1; i++)
-    *outptr++ = ((long) *inptr++) << 8;
-  //*outptr++ =((long) *inptr++) <<16;//32bit
+    *outptr++ = ((long) *inptr++) << shift;
 }
 
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
 static int
-stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff)
+stuff_buffer_basic_int(short *inptr, int length, int *outptr, int stuff, int shift) //shift 24:8,32:0
 {
   if ((stuff > 1) || (stuff < -1) || (length < 100))
     return length;
@@ -692,25 +691,25 @@ stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff)
     stuffsamp = (rand() % (length - 2)) + 1;
   pthread_mutex_lock(&vol_mutex);
   for (i = 0; i < stuffsamp << 1; i++)
-    *outptr++ = dithered_vol(*inptr++, 8);
+    *outptr++ = dithered_vol(*inptr++, shift);
   if (stuff) {
     if (stuff == 1) {
-      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), 8);
-      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), 8);
+      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), shift);
+      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), shift);
     } else if (stuff == -1)
       inptr += 2;
     int remainder = length;
     if (stuff < 0)
       remainder += stuff;
     for (; i < remainder << 1; i++)
-      *outptr++ = dithered_vol(*inptr++, 8);
+      *outptr++ = dithered_vol(*inptr++, shift);
   }
   pthread_mutex_unlock(&vol_mutex);
   return length + stuff;
 }
 
 static int
-stuff_buffer_basic16(short *inptr, int length, short *outptr, int stuff)
+stuff_buffer_basic(short *inptr, int length, short *outptr, int stuff)
 {
   if ((stuff > 1) || (stuff < -1) || (length < 100))
     return length;
@@ -741,19 +740,19 @@ const soxr_io_spec_t io_spec = {SOXR_INT16_I,SOXR_INT16_I,1.0,NULL,0};
 static short *otptr = NULL;
 
 static void
-out16(short *inptr, short *outptr, int len)
+out(short *inptr, short *outptr, int len, int shift)
 {
   int i;
   for (i = 0; i < len; i++)
-    *outptr++ = dithered_vol(*inptr++, 16);
+    *outptr++ = dithered_vol(*inptr++, shift);
 }
 
 static void
-out24(short *inptr, int *outptr, int len)
+out_int(short *inptr, int *outptr, int len, int shift)
 {
   int i;
   for (i = 0; i < len; i++)
-    *outptr++ = dithered_vol(*inptr++, 8);
+    *outptr++ = dithered_vol(*inptr++, shift);
 }
 
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
@@ -777,7 +776,7 @@ stuff_buffer_soxr(short *inptr, int length, void *outptr, int stuff, void (*func
     }
     ip = otptr;
   }
-  (*func)(ip, outptr, (length + stuff) << 1);
+  (*func)(ip, outptr, (length + stuff) << 1, 32 - config.format);
   return length + stuff;
 }
 #endif
@@ -853,16 +852,13 @@ player_thread_func(void *arg)
 	  last_seqno_read = (SUCCESSOR(last_seqno_read) & 0xffff);
 	  if (inframe->data == NULL)
 	    debug(1, "NULL inframe->data to play -- skipping it.");
+	  else if (inframe->length == 0)
+	    debug(1, "empty frame to play -- skipping it.");
+	  else if (config.format == 16)
+	    config.output->play((int*)inframe->data, inframe->length);
 	  else {
-	    if (inframe->length == 0)
-	      debug(1, "empty frame to play -- skipping it.");
-	    else {
-	      if (config.format == 6) {//24bit
-	        stuff_buffer_normal(inframe->data, inframe->length, outbuf);
-		config.output->play(outbuf, inframe->length);
-	      } else
-		config.output->play((int*)inframe->data, inframe->length);
-	    }
+	    stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format == 24 ? 8 : 16);
+	    config.output->play(outbuf, inframe->length);
 	  }
 	} else {
 	  at_least_one_frame_seen = 1;
@@ -941,33 +937,32 @@ player_thread_func(void *arg)
 		debug(1, "NULL inframe->data to play -- skipping it.");
 	      else if (inframe->length == 0)
 		  debug(1, "empty frame to play -- skipping it (2).");
-	      else {
-		if (config.format == 6) { //24bit
-		  stuff_buffer_normal(inframe->data, inframe->length, outbuf);
-		  config.output->play(outbuf, inframe->length);
-		} else
+	      else if (config.format == 16)
 		  config.output->play((int*)inframe->data, inframe->length);
+	      else {
+		stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format == 24 ? 8 : 16);
+		config.output->play(outbuf, inframe->length);
 	      }
 	    else {
 #ifdef HAVE_LIBSOXR
 	      switch (config.packet_stuffing) {
 	      case ST_basic:
-		if (config.format == 6) //24bit
-		  play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, amount_to_stuff);
+		if (config.format == 16)
+		  play_samples = stuff_buffer_basic(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
 		else
-		  play_samples = stuff_buffer_basic16(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
+		  play_samples = stuff_buffer_basic_int(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
 		break;
 	      case ST_soxr:
-		if (config.format == 6) //24bit
-		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out24);
+		if (config.format == 16)
+		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out);
 		else
-		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out16);
+		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out_int);
 	      }
 #else
-	      if (config.format == 6) //24bit
-		play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, amount_to_stuff);
+	      if (config.format == 16)
+		play_samples = stuff_buffer_basic(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
 	      else
-		play_samples = stuff_buffer_basic16(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
+		play_samples = stuff_buffer_basic_int(inframe->data, inframe->length, outbuf, amount_to_stuff, 32 - config.format);
 #endif
 	      if (outbuf == NULL)
 		debug(1, "NULL outbuf to play -- skipping it.");
@@ -994,18 +989,18 @@ player_thread_func(void *arg)
 		debug(1, "NULL inframe->data to play -- skipping it.");
 	      else if (inframe->length == 0)
 	        debug(1, "empty frame to play -- skipping it (3).");
-	      else {
-		if (config.format == 6) { //24bit
-		  stuff_buffer_normal(inframe->data, inframe->length, outbuf);
-		  config.output->play(outbuf, inframe->length);
-		} else
-		  config.output->play((int*)inframe->data, inframe->length);
-	      }
-	    else {
-	      if (config.format == 6) //24bit
-		play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, 0);
 	      else
-		play_samples = stuff_buffer_basic16(inframe->data, inframe->length, (short*)outbuf, 0);
+		if (config.format == 16)
+		  config.output->play((int*)inframe->data, inframe->length);
+		else {
+		  stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format == 24 ? 8 : 16);
+		  config.output->play(outbuf, inframe->length);
+		}
+	    else {
+	      if (config.format == 16)
+		play_samples = stuff_buffer_basic(inframe->data, inframe->length, (short*)outbuf, 0);
+	      else
+		play_samples = stuff_buffer_basic_int(inframe->data, inframe->length, outbuf, 0, 32 - config.format);
 	      if (outbuf == NULL)
 		debug(1, "NULL outbuf to play -- skipping it.");
 	      else if (inframe->length == 0)

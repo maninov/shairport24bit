@@ -223,7 +223,7 @@ void usage(char *progname) {
   printf("    --tolerance=TOLERANCE   allow a synchronization error of TOLERANCE frames (default "
          "88) before trying to correct it.\n");
 
-  printf("    -f, --format=NUMBER     number of pcm format 6(S24LE), 2(S16LE) (default 6).\n");
+  printf("    -f, --format=BIT_RATE   bit rate of pcm format 16(S16LE), 24(S24LE) (default 16).\n");
 
   printf("    --password=PASSWORD     require PASSWORD to connect. Default is not to require a "
          "password.\n");
@@ -755,9 +755,9 @@ int main(int argc, char **argv) {
                                    // vision on AppleTV, but also used for iPhone/iPod/iPad sources
   config.ForkedDaapdLatency = -1;  // -1 means not set. 99400 seems to be right
   config.resyncthreshold = 441 * 5;  // this number of frames is 50 ms
-  config.timeout = 120; // this number of seconds to wait for [more] audio before switching to idle.
+  config.timeout = 120;  // this number of seconds to wait for [more] audio before switching to idle.
   config.tolerance = 88; // this number of frames of error before attempting to correct it.
-  config.format = 6; // SND_PCM_FORMAT_S24 (/usr/include/alsa/pcm.h)
+  config.format = 16;    // SND_PCM_FORMAT_S24 (/usr/include/alsa/pcm.h)
   config.buffer_start_fill = 220;
   config.port = 5000;
   config.packet_stuffing = ST_basic; // simple interpolation or deletion
