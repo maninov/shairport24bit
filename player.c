@@ -717,7 +717,7 @@ stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff, int shift) 
     if (shift == 16)
       for (; i < remainder; i++) {
         *((short*)outptr) = dithered_vol(*inptr++, shift);
-        *((short*)outptr+1) = dithered_vol(*inptr++, shift);
+        *((short*)outptr + 1) = dithered_vol(*inptr++, shift);
 	outptr++;
       }
     else
@@ -841,7 +841,7 @@ player_thread_func(void *arg)
 	  else if (config.format == 16)
 	    config.output->play((int*)inframe->data, inframe->length);
 	  else {
-	    stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format == 24 ? 8 : 16);
+	    stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format - 16);
 	    config.output->play(outbuf, inframe->length);
 	  }
 	} else {
@@ -924,7 +924,7 @@ player_thread_func(void *arg)
 	      else if (config.format == 16)
 		  config.output->play((int*)inframe->data, inframe->length);
 	      else {
-		stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format == 24 ? 8 : 16);
+		stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format - 16);
 		config.output->play(outbuf, inframe->length);
 	      }
 	    else {
@@ -968,7 +968,7 @@ player_thread_func(void *arg)
 		if (config.format == 16)
 		  config.output->play((int*)inframe->data, inframe->length);
 		else {
-		  stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format == 24 ? 8 : 16);
+		  stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format - 16);
 		  config.output->play(outbuf, inframe->length);
 		}
 	    else {
