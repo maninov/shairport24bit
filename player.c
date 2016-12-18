@@ -389,7 +389,7 @@ rand_in_range(int32_t exclusive_range_limit)
 }
 
 static inline int
-dithered_vol(short sample)
+dithered_vol(short sample, int shift)//shift 0:32bit, 8:24bit, 16:16bit
 {
   long out = (long) sample * fix_volume;
   if (fix_volume < 0x10000) {
@@ -404,27 +404,7 @@ dithered_vol(short sample)
     else
       out = LONG_MIN;
   }
-  return out >> 8;
-  // return out // 32bit
-}
-
-static inline int
-dithered_vol16(short sample)
-{
-  long out = (long) sample * fix_volume;
-  if (fix_volume < 0x10000) {
-    long tpdf = rand_in_range(65536 + 1) - rand_in_range(65536 + 1);
-    if (tpdf >= 0)
-      if (LONG_MAX - tpdf >= out)
-	out += tpdf;
-      else
-	out = LONG_MAX;
-    else if (LONG_MIN - tpdf <= out)
-      out += tpdf;
-    else
-      out = LONG_MIN;
-  }
-  return out >> 16;
+  return out >> shift;
 }
 
 // get the next frame, when available. return 0 if underrun/stream reset.
@@ -698,7 +678,7 @@ stuff_buffer_normal(short *inptr, int length, int *outptr)
   int i;
   for (i = 0; i < length << 1; i++)
     *outptr++ = ((long) *inptr++) << 8;
-  // *outptr++ =((long) *inptr++) <<16;//32bit
+  //*outptr++ =((long) *inptr++) <<16;//32bit
 }
 
 // stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
@@ -712,18 +692,18 @@ stuff_buffer_basic(short *inptr, int length, int *outptr, int stuff)
     stuffsamp = (rand() % (length - 2)) + 1;
   pthread_mutex_lock(&vol_mutex);
   for (i = 0; i < stuffsamp << 1; i++)
-    *outptr++ = dithered_vol(*inptr++);
+    *outptr++ = dithered_vol(*inptr++, 8);
   if (stuff) {
     if (stuff == 1) {
-      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]));
-      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]));
+      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), 8);
+      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), 8);
     } else if (stuff == -1)
       inptr += 2;
     int remainder = length;
     if (stuff < 0)
       remainder += stuff;
     for (; i < remainder << 1; i++)
-      *outptr++ = dithered_vol(*inptr++);
+      *outptr++ = dithered_vol(*inptr++, 8);
   }
   pthread_mutex_unlock(&vol_mutex);
   return length + stuff;
@@ -739,18 +719,18 @@ stuff_buffer_basic16(short *inptr, int length, short *outptr, int stuff)
     stuffsamp = (rand() % (length - 2)) + 1;
   pthread_mutex_lock(&vol_mutex);
   for (i = 0; i < stuffsamp << 1; i++)
-    *outptr++ = dithered_vol16(*inptr++);
+    *outptr++ = dithered_vol(*inptr++, 16);
   if (stuff) {
     if (stuff == 1) {
-      *outptr++ = dithered_vol16(shortmean(inptr[-2], inptr[0]));
-      *outptr++ = dithered_vol16(shortmean(inptr[-1], inptr[1]));
+      *outptr++ = dithered_vol(shortmean(inptr[-2], inptr[0]), 16);
+      *outptr++ = dithered_vol(shortmean(inptr[-1], inptr[1]), 16);
     } else if (stuff == -1)
       inptr += 2;
     int remainder = length;
     if (stuff < 0)
       remainder += stuff;
     for (; i < remainder << 1; i++)
-      *outptr++ = dithered_vol16(*inptr++);
+      *outptr++ = dithered_vol(*inptr++, 16);
   }
   pthread_mutex_unlock(&vol_mutex);
   return length + stuff;
@@ -759,40 +739,32 @@ stuff_buffer_basic16(short *inptr, int length, short *outptr, int stuff)
 #ifdef HAVE_LIBSOXR
 const soxr_io_spec_t io_spec = {SOXR_INT16_I,SOXR_INT16_I,1.0,NULL,0};
 static short *otptr = NULL;
-// stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
-static int
-stuff_buffer_soxr(short *inptr, int length, int *outptr, int stuff)
+
+static void
+out16(short *inptr, short *outptr, int len)
 {
-  if ((stuff > 1) || (stuff < -1) || (length < 100))
-    return length;
   int i;
-  short *ip = inptr;
-  if (stuff) {
-    short *op = otptr;
-    size_t odone;
-    soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
-    const int gpm = 5;
-    short *ip2 = &inptr[(length - gpm) << 1];
-    short *op2 = &otptr[(length + stuff - gpm) << 1];
-    for (i = 0; i < gpm << 1; i++) {
-      *op++ = *ip++;
-      *op2++ = *ip2++;
-    }
-    ip = otptr;
-  }
-  for (i = 0; i < (length + stuff) << 1; i++)
-    *outptr++ = dithered_vol(*ip++);
-  return length + stuff;
+  for (i = 0; i < len; i++)
+    *outptr++ = dithered_vol(*inptr++, 16);
 }
 
+static void
+out24(short *inptr, int *outptr, int len)
+{
+  int i;
+  for (i = 0; i < len; i++)
+    *outptr++ = dithered_vol(*inptr++, 8);
+}
+
+// stuff: 1 means add 1; 0 means do nothing; -1 means remove 1
 static int
-stuff_buffer_soxr16(short *inptr, int length, short *outptr, int stuff)
+stuff_buffer_soxr(short *inptr, int length, void *outptr, int stuff, void (*func)())
 {
   if ((stuff > 1) || (stuff < -1) || (length < 100))
     return length;
-  int i;
   short *ip = inptr;
   if (stuff) {
+    int i;
     short *op = otptr;
     size_t odone;
     soxr_oneshot(length, length + stuff, 2, inptr, length, NULL, otptr, length + stuff, &odone, &io_spec, NULL, NULL);
@@ -805,8 +777,7 @@ stuff_buffer_soxr16(short *inptr, int length, short *outptr, int stuff)
     }
     ip = otptr;
   }
-  for (i = 0; i < (length + stuff) << 1; i++)
-    *outptr++ = dithered_vol16(*ip++);
+  (*func)(ip, outptr, (length + stuff) << 1);
   return length + stuff;
 }
 #endif
@@ -886,7 +857,7 @@ player_thread_func(void *arg)
 	    if (inframe->length == 0)
 	      debug(1, "empty frame to play -- skipping it.");
 	    else {
-	      if (config.format==6) {//24bit
+	      if (config.format == 6) {//24bit
 	        stuff_buffer_normal(inframe->data, inframe->length, outbuf);
 		config.output->play(outbuf, inframe->length);
 	      } else
@@ -971,7 +942,7 @@ player_thread_func(void *arg)
 	      else if (inframe->length == 0)
 		  debug(1, "empty frame to play -- skipping it (2).");
 	      else {
-		if (config.format==6) { //24bit
+		if (config.format == 6) { //24bit
 		  stuff_buffer_normal(inframe->data, inframe->length, outbuf);
 		  config.output->play(outbuf, inframe->length);
 		} else
@@ -981,19 +952,19 @@ player_thread_func(void *arg)
 #ifdef HAVE_LIBSOXR
 	      switch (config.packet_stuffing) {
 	      case ST_basic:
-		if (config.format==6) //24bit
+		if (config.format == 6) //24bit
 		  play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, amount_to_stuff);
 		else
 		  play_samples = stuff_buffer_basic16(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
 		break;
 	      case ST_soxr:
-		if (config.format==6) //24bit
-		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff);
+		if (config.format == 6) //24bit
+		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out24);
 		else
-		  play_samples = stuff_buffer_soxr16(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
+		  play_samples = stuff_buffer_soxr(inframe->data, inframe->length, outbuf, amount_to_stuff, out16);
 	      }
 #else
-	      if (config.format==6) //24bit
+	      if (config.format == 6) //24bit
 		play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, amount_to_stuff);
 	      else
 		play_samples = stuff_buffer_basic16(inframe->data, inframe->length, (short*)outbuf, amount_to_stuff);
@@ -1024,14 +995,14 @@ player_thread_func(void *arg)
 	      else if (inframe->length == 0)
 	        debug(1, "empty frame to play -- skipping it (3).");
 	      else {
-		if (config.format==6) { //24bit
+		if (config.format == 6) { //24bit
 		  stuff_buffer_normal(inframe->data, inframe->length, outbuf);
 		  config.output->play(outbuf, inframe->length);
 		} else
 		  config.output->play((int*)inframe->data, inframe->length);
 	      }
 	    else {
-	      if (config.format==6) //24bit
+	      if (config.format == 6) //24bit
 		play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, 0);
 	      else
 		play_samples = stuff_buffer_basic16(inframe->data, inframe->length, (short*)outbuf, 0);
