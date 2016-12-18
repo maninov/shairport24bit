@@ -10,3 +10,19 @@ $ make
 or $ make CFLAGS=-O3
 
 $ sudo make install
+
+
+--- about new option
+
+	shairport-sync add to option "-f or --format=", new (default -f 16).
+
+	if use 24 or 32 bit of DAC, editting "/var/www/inc/playerlib.php" file at "shairport-sync" command line.
+
+	case 16 bit DAC (no editting)
+	... '" -S soxr -w B ...
+
+	case 24 bit DAC
+	... '" -f 24 -S soxr -w B ...
+
+	case 32 bit DAC
+	... '" -f 32 -S soxr -w B ...
