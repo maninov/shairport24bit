@@ -905,14 +905,12 @@ player_thread_func(void *arg)
 	      amount_to_stuff = 1;
 	    if (current_delay < DAC_BUFFER_QUEUE_MINIMUM_LENGTH)
 	      amount_to_stuff = 0;
-	    if (amount_to_stuff) {
-	      if ((local_time_now) && (first_packet_time_to_play) && (local_time_now >= first_packet_time_to_play)) {
-		int64_t tp = (local_time_now - first_packet_time_to_play) >> 32;
-		if (tp < 5)
-		  amount_to_stuff = 0;
-		else if (tp < 30 && (random() % 1000) > 352)
-		  amount_to_stuff = 0;
-	      }
+	    if (amount_to_stuff && local_time_now && first_packet_time_to_play && local_time_now >= first_packet_time_to_play) {
+	      int64_t tp = (local_time_now - first_packet_time_to_play) >> 32;
+	      if (tp < 5)
+		amount_to_stuff = 0;
+	      else if (tp < 30 && (random() % 1000) > 352)
+		amount_to_stuff = 0;
 	    }
 	    if (config.no_sync != 0)
 	      amount_to_stuff = 0;
@@ -920,9 +918,9 @@ player_thread_func(void *arg)
 	      if (inframe->data == NULL)
 		debug(1, "NULL inframe->data to play -- skipping it.");
 	      else if (inframe->length == 0)
-		  debug(1, "empty frame to play -- skipping it (2).");
+	        debug(1, "empty frame to play -- skipping it (2).");
 	      else if (config.format == 16)
-		  config.output->play((int*)inframe->data, inframe->length);
+	        config.output->play((int*)inframe->data, inframe->length);
 	      else {
 		stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format - 16);
 		config.output->play(outbuf, inframe->length);
@@ -942,9 +940,9 @@ player_thread_func(void *arg)
 	      if (outbuf == NULL)
 		debug(1, "NULL outbuf to play -- skipping it.");
 	      else if (play_samples == 0)
-		  debug(1, "play_samples==0 skipping it (1).");
+		debug(1, "play_samples==0 skipping it (1).");
 	      else
-		  config.output->play(outbuf, play_samples);
+		config.output->play(outbuf, play_samples);
 	    }
 	    int64_t abs_sync_error = sync_error;
 	    if (abs_sync_error < 0)
@@ -958,28 +956,25 @@ player_thread_func(void *arg)
 	      }
 	    } else
 	      sync_error_out_of_bounds = 0;
-	  } else {
-	    if (fix_volume == 0x10000)
-	      if (inframe->data == NULL)
-		debug(1, "NULL inframe->data to play -- skipping it.");
-	      else if (inframe->length == 0)
-	        debug(1, "empty frame to play -- skipping it (3).");
-	      else
-		if (config.format == 16)
-		  config.output->play((int*)inframe->data, inframe->length);
-		else {
-		  stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format - 16);
-		  config.output->play(outbuf, inframe->length);
-		}
+	  } else if (fix_volume == 0x10000)
+	    if (inframe->data == NULL)
+	      debug(1, "NULL inframe->data to play -- skipping it.");
+	    else if (inframe->length == 0)
+	      debug(1, "empty frame to play -- skipping it (3).");
+	    else if (config.format == 16)
+	      config.output->play((int*)inframe->data, inframe->length);
 	    else {
-	      play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, 0, 32 - config.format);
-	      if (outbuf == NULL)
-		debug(1, "NULL outbuf to play -- skipping it.");
-	      else if (inframe->length == 0)
-		  debug(1, "empty frame to play -- skipping it (4).");
-	      else
-		  config.output->play(outbuf, play_samples);
+	      stuff_buffer_normal(inframe->data, inframe->length, outbuf, config.format - 16);
+	      config.output->play(outbuf, inframe->length);
 	    }
+	  else {
+	    play_samples = stuff_buffer_basic(inframe->data, inframe->length, outbuf, 0, 32 - config.format);
+	    if (outbuf == NULL)
+	      debug(1, "NULL outbuf to play -- skipping it.");
+	    else if (inframe->length == 0)
+	      debug(1, "empty frame to play -- skipping it (4).");
+	    else
+	      config.output->play(outbuf, play_samples);
 	  }
 	  inframe->timestamp = 0;
 	  inframe->sequence_number = 0;
