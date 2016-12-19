@@ -555,11 +555,11 @@ buffer_get_frame(void)
 		}
 		signed int *silence;
 		if (fs != 0) {
-		  silence = malloc(b32_byte_ch * fs);
+		  silence = malloc((config.format == 16 ? b16_byte_ch : b32_byte_ch) * fs);
 		  if (silence == NULL)
 		    debug(1, "Failed to allocate %d byte silence buffer.", fs);
 		  else {
-		    memset(silence, 0, b32_byte_ch * fs);
+		    memset(silence, 0, (config.format == 16 ? b16_byte_ch : b32_byte_ch) * fs);
 		    config.output->play(silence, fs);
 		    free(silence);
 		    have_sent_prefiller_silence = 1;
@@ -806,7 +806,7 @@ player_thread_func(void *arg)
   char rnstate[256];
   initstate(time(NULL), rnstate, 256);
   signed int *outbuf;
-  outbuf = malloc(b32_byte_ch * (frame_size + max_frame_size_change));
+  outbuf = malloc((config.format == 16 ? b16_byte_ch : b32_byte_ch) * (frame_size + max_frame_size_change));
   if (outbuf == NULL)
     debug(1, "Failed to allocate memory for an output buffer.");
 #ifdef HAVE_LIBSOXR
